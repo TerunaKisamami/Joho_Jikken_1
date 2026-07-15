@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Smart Lock Emulator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="emulator.css">
+</head>
+<body>
+    <div class="background-effects">
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>Smart Lock Emulator</h1>
+            <p>ESP32 + RC522 + SSD1306 + LINE Notify + Joystick</p>
+        </header>
+
+        <main class="grid-layout">
+            <!-- Left Column: Devices & Joystick -->
+            <div class="left-col">
+                <!-- OLED Display -->
+                <section class="glass-panel device-panel oled-container">
+                    <h2><span class="icon">📺</span> SSD1306 OLED (0.96")</h2>
+                    <div class="oled-screen" id="oled-screen">
+                        <div class="oled-text-wrapper">
+                            <div class="oled-line" id="oled-line1"></div>
+                            <div class="oled-line" id="oled-line2"></div>
+                            <div class="oled-line" id="oled-line3"></div>
+                            <div class="oled-line" id="oled-line4"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Virtual Joystick (8-Way) -->
+                <section class="glass-panel device-panel joystick-container">
+                    <h2><span class="icon">🕹️</span> QYF-860 Joystick</h2>
+                    <div class="dpad-wrapper">
+                        <div class="dpad">
+                            <button class="dpad-btn up-left" onclick="pushJoystick('UP_LEFT')">↖</button>
+                            <button class="dpad-btn up" onclick="pushJoystick('UP')">▲</button>
+                            <button class="dpad-btn up-right" onclick="pushJoystick('UP_RIGHT')">↗</button>
+                            
+                            <button class="dpad-btn left" onclick="pushJoystick('LEFT')">◀</button>
+                            <button class="dpad-btn center-btn" onclick="pushJoystick('SW')">SW</button>
+                            <button class="dpad-btn right" onclick="pushJoystick('RIGHT')">▶</button>
+                            
+                            <button class="dpad-btn down-left" onclick="pushJoystick('DOWN_LEFT')">↙</button>
+                            <button class="dpad-btn down" onclick="pushJoystick('DOWN')">▼</button>
+                            <button class="dpad-btn down-right" onclick="pushJoystick('DOWN_RIGHT')">↘</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Servo Lock & LEDs -->
+                <section class="glass-panel device-panel servo-container">
+                    <h2><span class="icon">🔒</span> Lock & LED Status</h2>
+                    <div class="status-panel">
+                        <!-- LEDs -->
+                        <div class="led-group">
+                            <div class="led-indicator">
+                                <div class="led green" id="led-success"></div>
+                                <span>Success</span>
+                            </div>
+                            <div class="led-indicator">
+                                <div class="led red" id="led-fail"></div>
+                                <span>Fail</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Servo -->
+                        <div class="servo-status" id="servo-status">
+                            <div class="lock-icon" id="lock-icon">
+                                <svg class="icon-locked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                </svg>
+                                <svg class="icon-unlocked hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                    <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                                </svg>
+                            </div>
+                            <div class="status-text" id="servo-text">LOCKED</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Middle Column: RFID Simulation -->
+            <div class="middle-col">
+                <section class="glass-panel device-panel rfid-container">
+                    <h2><span class="icon">💳</span> RC522 RFID Simulator</h2>
+                    <p class="subtitle">Select a card to scan:</p>
+                    <div class="card-buttons">
+                        <button class="card-btn" onclick="scanCard('A1B2C3D4')">
+                            <span class="card-icon">👤</span>
+                            <div class="card-info">
+                                <span class="card-name">Card 1</span>
+                                <span class="card-uid">UID: A1B2C3D4</span>
+                            </div>
+                        </button>
+                        
+                        <button class="card-btn" onclick="scanCard('12345678')">
+                            <span class="card-icon">👨‍👩‍👧</span>
+                            <div class="card-info">
+                                <span class="card-name">Card 2</span>
+                                <span class="card-uid">UID: 12345678</span>
+                            </div>
+                        </button>
+
+                        <button class="card-btn" onclick="scanCard('DEADBEEF')">
+                            <span class="card-icon">❓</span>
+                            <div class="card-info">
+                                <span class="card-name">Random Card</span>
+                                <span class="card-uid">UID: DEADBEEF</span>
+                            </div>
+                        </button>
+                    </div>
+                    
+                    <div class="database-view">
+                        <h3>Registered UIDs (EEPROM/Prefs)</h3>
+                        <ul id="registered-list" class="uid-list">
+                            <!-- Populated via JS -->
+                        </ul>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: LINE Notify Log -->
+            <div class="right-col">
+                <section class="glass-panel device-panel line-container">
+                    <h2><span class="icon">💬</span> LINE Notify Log</h2>
+                    <div class="line-log" id="line-log"></div>
+                    <button class="clear-btn" onclick="clearLog()">Clear Log</button>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="emulator.js"></script>
+</body>
+</html>

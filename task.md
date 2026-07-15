@@ -1,0 +1,9 @@
+- [x] `sketch_jul14a.ino`: Clear logic and write structural guide.
+- [x] `ArduinoUno_Main/ArduinoUno_Main.ino`: Implement core Uno logic, including Boot Register state.
+- [x] `ESP32_WiFi/ESP32_WiFi.ino`: Relocate and implement ESP32 communication logic.
+- [x] Remove root-level duplicate files (`ArduinoUno_Main.ino`, `ESP32_WiFi.ino`).
+- [x] `emulator.html`: Update layout and UI components (including LED display).
+- [x] `emulator.css`: Style D-pad, LEDs, and new database details.
+- [x] `emulator.js`: Synchronize all UI interactions, including Boot Register state.
+- [x] `README.md`: Document folder structure and wiring.
+- [x] `walkthrough.md`: Summarize folder structure and Boot Register logic.
