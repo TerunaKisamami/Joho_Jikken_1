@@ -27,8 +27,8 @@ constexpr uint8_t JOY_Y_PIN = A1;
 constexpr uint8_t JOY_SW_PIN = 7; // SWを追加
 
 // LEDs
-constexpr uint8_t LED_SUCCESS = 4;
-constexpr uint8_t LED_FAIL = 5;
+constexpr uint8_t LED_SUCCESS = 5; // 緑LED (配線ではD5)
+constexpr uint8_t LED_FAIL = 4;    // 赤LED (配線ではD4)
 
 // =====================================================
 // 設定値・定数
@@ -36,9 +36,9 @@ constexpr uint8_t LED_FAIL = 5;
 constexpr int LOCK_ANGLE = 90;
 constexpr int UNLOCK_ANGLE = 0;
 constexpr unsigned long UNLOCK_TIME = 5000;
-constexpr int MAX_CARDS = 20;
+constexpr int MAX_CARDS = 10;
 constexpr int UID_LENGTH = 8;
-constexpr int MAX_PASS_LENGTH = 32;
+constexpr int MAX_PASS_LENGTH = 16;
 
 // =====================================================
 // オブジェクト
@@ -48,7 +48,7 @@ Servo lockServo;
 SoftwareSerial espSerial(ESP_RX_PIN, ESP_TX_PIN);
 
 #define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
+#define SCREEN_HEIGHT 32
 #define OLED_RESET -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -84,6 +84,7 @@ SystemState currentState = STATE_BOOT_REGISTER;
 unsigned long lastCardReadTime = 0;
 unsigned long doorUnlockedTime = 0;
 bool doorUnlocked = false;
+bool oledEnabled = false;
 
 // カードデータ
 String authorizedCards[MAX_CARDS];
@@ -181,72 +182,74 @@ int findCard(const String& uid) {
 // OLED / UI
 // =====================================================
 void refreshOLED() {
+  if (!oledEnabled) return; // 液晶がない場合は完全にスキップしてフリーズを防ぐ
+
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   
   if (currentState == STATE_BOOT_REGISTER) {
-    display.setCursor(0,0); display.println("[BOOT REGISTER]");
-    display.setCursor(0,15); display.println("Scan Card to Add");
-    display.setCursor(0,30); display.println("-------------");
-    display.setCursor(0,45); display.println("(SW to Skip)");
+    display.setCursor(0,0); display.println(F("[BOOT REGISTER]"));
+    display.setCursor(0,8); display.println(F("Scan Card to Add"));
+    display.setCursor(0,16); display.println(F("-------------"));
+    display.setCursor(0,24); display.println(F("(SW to Skip)"));
   }
   else if (currentState == STATE_LOCKED_CARD) {
-    display.setCursor(0,0); display.println("[CARD UNLOCK]");
-    display.setCursor(0,15); display.println("Scan RFID Card");
-    display.setCursor(0,30); display.println("-------------");
-    display.setCursor(0,45); display.println("(SW to Pass Mode)");
+    display.setCursor(0,0); display.println(F("[CARD UNLOCK]"));
+    display.setCursor(0,8); display.println(F("Scan RFID Card"));
+    display.setCursor(0,16); display.println(F("-------------"));
+    display.setCursor(0,24); display.println(F("(SW to Pass Mode)"));
   }
   else if (currentState == STATE_LOCKED_PASS) {
-    display.setCursor(0,0); display.println("[PASS UNLOCK]");
-    display.setCursor(0,15); display.println("Input sequence:");
-    display.setCursor(0,30); 
+    display.setCursor(0,0); display.println(F("[PASS UNLOCK]"));
+    display.setCursor(0,8); display.println(F("Input sequence:"));
+    display.setCursor(0,16); 
     for(int i=0; i<currentInputLen; i++) display.print("*");
     display.println();
-    display.setCursor(0,45); display.println("(SW to Card Mode)");
+    display.setCursor(0,24); display.println(F("(SW to Card Mode)"));
   }
   else if (currentState == STATE_UNLOCKED) {
-    display.setCursor(0,0); display.println("UNLOCKED!");
-    display.setCursor(0,15); display.println("Welcome.");
-    display.setCursor(0,30); display.println("-------------");
-    display.setCursor(0,45); display.println("(SW for Admin)");
+    display.setCursor(0,0); display.println(F("UNLOCKED!"));
+    display.setCursor(0,8); display.println(F("Welcome."));
+    display.setCursor(0,16); display.println(F("-------------"));
+    display.setCursor(0,24); display.println(F("(SW for Admin)"));
   }
   else if (currentState == STATE_ADMIN) {
     display.setCursor(0,0);
-    display.print(adminCursor==0 ? "> " : "  ");
-    display.print("Mode: < ");
-    display.print(adminActionMode==0 ? "Register" : "Delete");
-    display.println(" >");
+    display.print(adminCursor==0 ? F("> ") : F("  "));
+    display.print(F("Mode: < "));
+    display.print(adminActionMode==0 ? F("Register") : F("Delete"));
+    display.println(F(" >"));
 
-    display.setCursor(0,15);
-    display.print(adminCursor==1 ? "> " : "  ");
-    display.print("Card: ");
+    display.setCursor(0,8);
+    display.print(adminCursor==1 ? F("> ") : F("  "));
+    display.print(F("Card: "));
     if (authorizedCardCount > 0) {
-      display.print(adminCardIndex + 1); display.print("/"); display.print(authorizedCardCount);
-      display.println(); display.print("   "); display.println(authorizedCards[adminCardIndex]);
+      display.print(adminCardIndex + 1); display.print(F("/")); display.print(authorizedCardCount);
+      display.println(); display.print(F("   ")); display.println(authorizedCards[adminCardIndex]);
     } else {
-      display.println("No Cards");
+      display.println(F("No Cards"));
     }
 
-    display.setCursor(0,35);
-    display.print(adminCursor==2 ? "> " : "  ");
-    display.println("Change Password");
+    display.setCursor(0,18);
+    display.print(adminCursor==2 ? F("> ") : F("  "));
+    display.println(F("Change Password"));
 
-    display.setCursor(0,45);
-    display.print(adminCursor==3 ? "> " : "  ");
-    display.println("Exit Admin");
+    display.setCursor(0,24);
+    display.print(adminCursor==3 ? F("> ") : F("  "));
+    display.println(F("Exit Admin"));
   }
   else if (currentState == STATE_ADMIN_PASS1) {
-    display.setCursor(0,0); display.println("Enter New Pass:");
-    display.setCursor(0,20);
+    display.setCursor(0,0); display.println(F("Enter New Pass:"));
+    display.setCursor(0,12);
     for(int i=0; i<currentInputLen; i++) display.print("*");
-    display.setCursor(0,40); display.println("Press SW to confirm");
+    display.setCursor(0,24); display.println(F("Press SW to confirm"));
   }
   else if (currentState == STATE_ADMIN_PASS2) {
-    display.setCursor(0,0); display.println("Re-enter Pass:");
-    display.setCursor(0,20);
+    display.setCursor(0,0); display.println(F("Re-enter Pass:"));
+    display.setCursor(0,12);
     for(int i=0; i<currentInputLen; i++) display.print("*");
-    display.setCursor(0,40); display.println("Press SW to verify");
+    display.setCursor(0,24); display.println(F("Press SW to verify"));
   }
 
   display.display();
@@ -308,10 +311,18 @@ void checkAutoLock() {
 
 void checkRFID() {
   if (currentState != STATE_BOOT_REGISTER && currentState != STATE_LOCKED_CARD && currentState != STATE_ADMIN) return;
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) return;
+  if (!rfid.PICC_IsNewCardPresent()) return;
+  if (!rfid.PICC_ReadCardSerial()) {
+    Serial.println(F("Card present, but read failed."));
+    return;
+  }
 
+  Serial.println(F("=== CARD DETECTED ==="));
   unsigned long now = millis();
-  if (now - lastCardReadTime < 2000) return;
+  if (now - lastCardReadTime < 2000) {
+    Serial.println(F("Ignored (read too fast)."));
+    return;
+  }
   lastCardReadTime = now;
 
   String uid = "";
@@ -320,7 +331,10 @@ void checkRFID() {
     uid += String(rfid.uid.uidByte[i], HEX);
   }
   uid.toUpperCase();
+  Serial.print(F("UID: ")); Serial.println(uid);
+
   int idx = findCard(uid);
+  Serial.print(F("Card Index: ")); Serial.println(idx);
 
   if (currentState == STATE_BOOT_REGISTER) {
     if (idx >= 0) {
@@ -520,24 +534,155 @@ void setup() {
   pinMode(LED_SUCCESS, OUTPUT);
   pinMode(LED_FAIL, OUTPUT);
   pinMode(JOY_SW_PIN, INPUT_PULLUP);
-  setLEDs(false, false);
+  
+  // ==========================================
+  // LED配線テスト（目視チェック用）
+  // ==========================================
+  Serial.println(F("\n--- LED WIRE TEST ---"));
+  Serial.println(F("Green LED (D5) should turn ON for 1 second..."));
+  setLEDs(true, false); // 緑だけON
+  delay(1000);
+  Serial.println(F("Red LED (D4) should turn ON for 1 second..."));
+  setLEDs(false, true); // 赤だけON
+  delay(1000);
+  setLEDs(false, false); // 両方OFF
+  Serial.println(F("LED Test Complete."));
+  // ==========================================
 
+  Serial.println(F("\n--- SYSTEM BOOT ---"));
+  
   SPI.begin();
   rfid.PCD_Init();
+  
+  // ==========================================
+  // SPI通信の完全性チェック（診断コード）
+  // ==========================================
+  Serial.println(F("\n--- SPI WIRE DIAGNOSTICS ---"));
+  
+  // レジスタ(WaterLevelReg)にテスト用のデータを書き込んで読み出す
+  rfid.PCD_WriteRegister(rfid.WaterLevelReg, 0xAA); // 10101010 を送信
+  byte r1 = rfid.PCD_ReadRegister(rfid.WaterLevelReg);
+  
+  rfid.PCD_WriteRegister(rfid.WaterLevelReg, 0x55); // 01010101 を送信
+  byte r2 = rfid.PCD_ReadRegister(rfid.WaterLevelReg);
+
+  Serial.print(F("Test 1 (Sent 0xAA, Got): 0x")); Serial.println(r1, HEX);
+  Serial.print(F("Test 2 (Sent 0x55, Got): 0x")); Serial.println(r2, HEX);
+
+  if (r1 == 0x00 && r2 == 0x00) {
+    Serial.println(F(">> RESULT: TOTAL FAILURE (完全な断線)"));
+    Serial.println(F("MISO(12), MOSI(11), SCK(13) のどれかが完全に抜けているか断線しています。"));
+  } 
+  else if (r1 == 0xAA && r2 == 0x55) {
+    Serial.println(F(">> RESULT: PERFECT CONNECTION (通信完璧)"));
+    Serial.println(F("配線は完璧です。これでもカードが読めないなら、アンテナかカード自体の故障です。"));
+  } 
+  else {
+    Serial.println(F(">> RESULT: PARTIAL CORRUPTION (ノイズ・接触不良)"));
+    Serial.println(F("電気は通っていますが、文字化けしています！"));
+    Serial.println(F("SCK(13) にノイズが乗っているか、ジャンパー線の中で切れかかっています。"));
+  }
+  Serial.println(F("----------------------------\n"));
+  // ==========================================
+
+  // SPI通信テスト：カードリーダーのバージョン情報を取得する
+  Serial.print(F("RC522 Firmware Version: "));
+  rfid.PCD_DumpVersionToSerial();
+
+  // ==========================================
+  // RC522 内部チップ自己診断（Self-Test）
+  // ==========================================
+  Serial.println(F("\n--- RC522 CHIP SELF-TEST ---"));
+  Serial.println(F("Testing internal memory and FIFO buffer..."));
+  bool selfTestPass = rfid.PCD_PerformSelfTest();
+  if (selfTestPass) {
+    Serial.println(F(">> RESULT: SELF-TEST PASSED! (チップの頭脳は正常)"));
+    Serial.println(F("内部メモリもSPI通信も100%完璧です！"));
+    Serial.println(F("それなのにカードが読めない理由は2つしかありません："));
+    Serial.println(F(" 1. 基板の「アンテナ部分（銅線のぐるぐる）」が物理的に壊れている（初期不良）"));
+    Serial.println(F(" 2. 使っているカードが「MIFARE 1K規格」ではない"));
+  } else {
+    Serial.println(F(">> RESULT: SELF-TEST FAILED! (チップの頭脳が異常)"));
+    Serial.println(F("内部のテストメモリが破損しているか、標準規格から外れた『完全な偽造チップ』です。"));
+    Serial.println(F("この基板では正常にプログラムを動かすことは不可能です（初期不良確定）。"));
+  }
+  Serial.println(F("----------------------------\n"));
+  
+  // セルフトスト後はチップがリセットされるため、もう一度初期化する
+  rfid.PCD_Init();
+  
+  // アンテナの電波出力を最大にして読み取りを安定させる
+  rfid.PCD_SetAntennaGain(rfid.RxGain_max);
+  Serial.println(F("RFID reader initialized (Max Gain)."));
   lockServo.attach(SERVO_PIN);
   lockServo.write(LOCK_ANGLE);
 
   Wire.begin();
+  // ==========================================
+  // I2C通信（液晶）の完全性チェック（診断コード）
+  // ==========================================
+  Serial.println(F("\n--- I2C WIRE DIAGNOSTICS ---"));
+  Serial.println(F("Scanning for I2C devices (OLED)..."));
+  byte error, address;
+  int nDevices = 0;
+  for(address = 1; address < 127; address++ ) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.print(F(">> RESULT: DEVICE FOUND at address 0x"));
+      if (address < 16) Serial.print(F("0"));
+      Serial.print(address, HEX);
+      Serial.println(F(" ! (通信完璧)"));
+      nDevices++;
+    }
+  }
+  if (nDevices == 0) {
+    Serial.println(F(">> RESULT: TOTAL FAILURE (NO DEVICES FOUND)"));
+    Serial.println(F("液晶が繋がっていません！A4・A5の線が切れているか、液晶が完全に壊れています。"));
+  } else {
+    Serial.println(F("配線は完璧です。もしこれで画面が映らないなら、液晶のガラス面や内部チップの故障（初期不良）です。"));
+  }
+  Serial.println(F("----------------------------\n"));
+  // ==========================================
+
+  Serial.println(F("Initializing OLED..."));
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
+    Serial.println(F("0x3C failed. Trying 0x3D..."));
+    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3D)) {
+      Serial.println(F("SSD1306 allocation failed! Check wiring (A4/A5)."));
+      Serial.println(F("WARNING: OLED bypassed. System will run without screen."));
+      oledEnabled = false;
+    } else {
+      Serial.println(F("OLED initialized at 0x3D!"));
+      oledEnabled = true;
+    }
+  } else {
+    Serial.println(F("OLED initialized at 0x3C!"));
+    oledEnabled = true;
   }
 
   loadData();
-  switchState(STATE_LOCKED_CARD);
+  
+  // カードが1枚も登録されていない場合は登録モードへ、あればロック画面へ
+  if (authorizedCardCount == 0) {
+    switchState(STATE_BOOT_REGISTER);
+    Serial.println(F("Mode: BOOT REGISTER (Scan a card to register)"));
+  } else {
+    switchState(STATE_LOCKED_CARD);
+    Serial.println(F("Mode: LOCKED (Scan your card to unlock)"));
+  }
+  
+  Serial.println(F("Setup complete. Starting loop()..."));
 }
 
+unsigned long lastLoopPrint = 0;
+
 void loop() {
+  if (millis() - lastLoopPrint > 5000) {
+    Serial.println(F("System running... waiting for card."));
+    lastLoopPrint = millis();
+  }
+
   handleJoystick();
   checkRFID();
   checkAutoLock();
