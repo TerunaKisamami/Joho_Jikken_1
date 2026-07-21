@@ -15,6 +15,16 @@ RFID（RC522）とジョイスティックを用いた高度な多機能スマ�
 
 ---
 
+## 1.5 必要なライブラリ (Arduino IDE)
+Arduino IDEの「ライブラリマネージャー」から以下の3つのライブラリを検索し、インストールしてください。
+（※SPI, Wire, Servo, EEPROM, SoftwareSerial などは標準搭載のためインストール不要です）
+
+1. **MFRC522** (by GithubCommunity)
+2. **Adafruit GFX Library** (by Adafruit)
+3. **Adafruit SSD1306** (by Adafruit)
+
+---
+
 ## 2. 配線表
 
 ### 🔌 Arduino Uno と ESP32 の接続 (SoftwareSerial)

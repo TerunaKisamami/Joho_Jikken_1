@@ -676,11 +676,22 @@ void setup() {
 }
 
 unsigned long lastLoopPrint = 0;
+unsigned long lastLedBlinkTime = 0;
+bool blinkState = false;
 
 void loop() {
   if (millis() - lastLoopPrint > 5000) {
     Serial.println(F("System running... waiting for card."));
     lastLoopPrint = millis();
+  }
+
+  // 登録モードの待機中のみ、LEDを交互に点滅させる
+  if (currentState == STATE_BOOT_REGISTER) {
+    if (millis() - lastLedBlinkTime > 500) {
+      lastLedBlinkTime = millis();
+      blinkState = !blinkState;
+      setLEDs(blinkState, !blinkState);
+    }
   }
 
   handleJoystick();
