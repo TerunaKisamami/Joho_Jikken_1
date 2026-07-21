@@ -611,9 +611,26 @@ void setup() {
   // セルフトスト後はチップがリセットされるため、もう一度初期化する
   rfid.PCD_Init();
   
-  // アンテナの電波出力を最大にして読み取りを安定させる
-  rfid.PCD_SetAntennaGain(rfid.RxGain_max);
-  Serial.println(F("RFID reader initialized (Max Gain)."));
+  // ==========================================
+  // 【互換チップ(クローン)用 救済ハック】
+  // ライブラリの初期化を無視して、チップの内部レジスタを直接書き換える
+  // ==========================================
+  Serial.println(F("\n--- APPLYING CLONE CHIP HACKS ---"));
+  
+  // 1. タイマーの制限時間を大幅に伸ばす（クローンは処理が遅くタイムアウトしやすいため）
+  rfid.PCD_WriteRegister(rfid.TReloadRegH, 0x03); // デフォルト0x00 -> 0x03 に延長
+  rfid.PCD_WriteRegister(rfid.TReloadRegL, 0xE8); // デフォルト30 -> 1000 に延長
+
+  // 2. 受信感度のチューニング（MAXだとクローン基板ではノイズを拾いすぎて自滅するため、標準の38dBに固定）
+  rfid.PCD_WriteRegister(rfid.RxSelReg, 0x86); 
+  rfid.PCD_WriteRegister(rfid.RxThresholdReg, 0x55); 
+  // rfid.PCD_SetAntennaGain(rfid.RxGain_max); // ←クローンでは逆にエラーになるのでコメントアウト
+  
+  // 3. 通信のノイズフィルター（DemodReg）をクローン向けに緩める
+  rfid.PCD_WriteRegister(rfid.DemodReg, 0x4D);
+
+  Serial.println(F("Clone hardware hacks applied."));
+  Serial.println(F("----------------------------\n"));
   lockServo.attach(SERVO_PIN);
   lockServo.write(LOCK_ANGLE);
 
