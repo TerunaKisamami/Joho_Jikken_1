@@ -9,7 +9,11 @@
 const char *WIFI_SSID = "YOUR_WIFI_SSID";
 const char *WIFI_PASS = "YOUR_WIFI_PASSWORD";
 
-const char *LINE_TOKEN = "YOUR_LINE_NOTIFY_TOKEN";
-const char *LINE_HOST  = "notify-api.line.me";
+// LINE Messaging API (Push Message) の認証情報
+const char *LINE_ACCESS_TOKEN = "YOUR_CHANNEL_ACCESS_TOKEN";
+const char *LINE_USER_ID      = "YOUR_USER_ID";
+
+// Google Apps Script (GAS) Webhook URL (ポーリング用)
+const char *GAS_WEBHOOK_URL   = "YOUR_GAS_WEBHOOK_URL";
 
 #endif

@@ -342,39 +342,65 @@ String getCurrentPasswordString() {
   return s;
 }
 
-unsigned long lastDirInputTime = 0;
+unsigned long lastStrokeEndTime = 0;
+bool inStroke = false;
+JoyDirection strokeDir = DIR_CENTER;
+unsigned long centerStartTime = 0;
 
 void handleJoystick() {
   JoyDirection currentDir = readJoystick();
   bool swCurr = digitalRead(JOY_SW_PIN);
 
-  if (currentDir != DIR_CENTER && currentDir != lastJoyDir) {
-    // ニュートラル(中央)から動かした時のみ、1文字として入力する
-    if (currentInputLen < MAX_PASS_LENGTH) {
-      currentInputPass[currentInputLen++] = currentDir;
-      lastDirInputTime = millis(); // 最後に方向入力された時間を記録
-      refreshOLED(); // アスタリスクを増やす
-    }
-  }
-  lastJoyDir = currentDir;
-
+  // 押し込みボタン(SW)が押された処理
   if (swCurr == LOW && lastSwState == HIGH && millis() - lastSwTime > 50) {
-    // 押し込みボタン(SW)が押された
     swPressed = true;
     lastSwTime = millis();
     
     // 【誤入力防止ハック】
-    // ボタンを押し込む直前（約300ミリ秒以内）に方向が入力されていた場合、
-    // それは「純粋な方向入力」ではなく「押し込み時に親指がブレて傾いたことによる誤入力」
-    // である可能性が極めて高いため、最後の1文字を自動的にキャンセル（取り消し）する。
-    if (millis() - lastDirInputTime < 300 && currentInputLen > 0) {
-      currentInputLen--; // 最後の入力を無かったことにする
+    if (millis() - lastStrokeEndTime < 300 && currentInputLen > 0) {
+      currentInputLen--; // 最後の入力をキャンセル
       refreshOLED();
     }
   } else {
     swPressed = false;
   }
   lastSwState = swCurr;
+
+  // 方向入力の処理（ストロークベース）
+  if (currentDir != DIR_CENTER) {
+    centerStartTime = 0; // センタリングのタイマーをリセット
+    if (!inStroke) {
+      // ストローク開始
+      inStroke = true;
+      strokeDir = currentDir;
+    } else {
+      // ストローク中の更新（斜め入力を優先して記録）
+      bool isCurrentDiag = (currentDir >= DIR_UP_LEFT && currentDir <= DIR_DOWN_RIGHT);
+      bool isStrokeDiag = (strokeDir >= DIR_UP_LEFT && strokeDir <= DIR_DOWN_RIGHT);
+      
+      if (isCurrentDiag) {
+        strokeDir = currentDir; // 斜めなら無条件で上書き
+      } else if (!isStrokeDiag) {
+        strokeDir = currentDir; // どちらも四方向なら上書き
+      }
+    }
+  } else {
+    // ニュートラル(中央)
+    if (inStroke) {
+      if (centerStartTime == 0) centerStartTime = millis();
+      
+      // 50ms以上中央に留まったらストローク終了として確定
+      if (millis() - centerStartTime > 50) {
+        inStroke = false;
+        lastStrokeEndTime = millis(); // 最後に方向入力された時間を記録
+        
+        if (currentInputLen < MAX_PASS_LENGTH) {
+          currentInputPass[currentInputLen++] = strokeDir;
+          refreshOLED();
+        }
+      }
+    }
+  }
 }
 
 // パスワードの一致確認
@@ -384,6 +410,82 @@ bool checkPasswordMatch(byte* pass1, int len1, byte* pass2, int len2) {
     if (pass1[i] != pass2[i]) return false;
   }
   return true;
+}
+
+// =====================================================
+// ESP32(LINE)からのコマンド処理
+// =====================================================
+void handleEspSerial() {
+  if (espSerial.available()) {
+    String cmd = espSerial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.length() == 0) return;
+    
+    if (cmd.startsWith("LINE_UNLOCK:")) {
+      String linePass = cmd.substring(12);
+      
+      int tempLen = 0;
+      byte tempBuf[MAX_PASS_LENGTH];
+      for (int i=0; i<linePass.length() && i<MAX_PASS_LENGTH; i++) {
+        char c = linePass.charAt(i);
+        if (c >= '0' && c <= '7') {
+          byte dir = DIR_CENTER;
+          if (c == '0') dir = DIR_UP;
+          else if (c == '1') dir = DIR_UP_RIGHT;
+          else if (c == '2') dir = DIR_RIGHT;
+          else if (c == '3') dir = DIR_DOWN_RIGHT;
+          else if (c == '4') dir = DIR_DOWN;
+          else if (c == '5') dir = DIR_DOWN_LEFT;
+          else if (c == '6') dir = DIR_LEFT;
+          else if (c == '7') dir = DIR_UP_LEFT;
+          tempBuf[tempLen++] = dir;
+        }
+      }
+      
+      if (checkPasswordMatch(savedPassword, savedPasswordLen, tempBuf, tempLen)) {
+        String pd = "";
+        for(int i=0; i<tempLen; i++) pd += String(tempBuf[i]);
+        unlockDoor("LINE", pd);
+      } else {
+        String pd = "";
+        for(int i=0; i<tempLen; i++) pd += String(tempBuf[i]);
+        espSerial.println("FAIL:LINE:" + pd);
+        triggerError("LINE Error", "Wrong Pass");
+        switchState(STATE_LOCKED);
+      }
+    } 
+    else if (cmd.startsWith("LINE_CHANGE:")) {
+      String linePass = cmd.substring(12);
+      
+      int tempLen = 0;
+      byte tempBuf[MAX_PASS_LENGTH];
+      for (int i=0; i<linePass.length() && i<MAX_PASS_LENGTH; i++) {
+        char c = linePass.charAt(i);
+        if (c >= '0' && c <= '7') {
+          byte dir = DIR_CENTER;
+          if (c == '0') dir = DIR_UP;
+          else if (c == '1') dir = DIR_UP_RIGHT;
+          else if (c == '2') dir = DIR_RIGHT;
+          else if (c == '3') dir = DIR_DOWN_RIGHT;
+          else if (c == '4') dir = DIR_DOWN;
+          else if (c == '5') dir = DIR_DOWN_LEFT;
+          else if (c == '6') dir = DIR_LEFT;
+          else if (c == '7') dir = DIR_UP_LEFT;
+          tempBuf[tempLen++] = dir;
+        }
+      }
+      
+      if (tempLen > 0) {
+        savedPasswordLen = tempLen;
+        for (int i=0; i<tempLen; i++) savedPassword[i] = tempBuf[i];
+        saveData();
+        triggerSuccess("Success!", "LINE Pass Saved");
+        espSerial.println("PASS_CHANGED");
+        lockDoor();
+        switchState(STATE_LOCKED);
+      }
+    }
+  }
 }
 
 // =====================================================
@@ -421,6 +523,7 @@ void setup() {
 
 void loop() {
   handleJoystick();
+  handleEspSerial();
 
   // ---------------------------------------------------
   // [1] パスワード入力フェーズ (初回登録 または 変更時の1回目)
@@ -446,11 +549,16 @@ void loop() {
     if (swPressed) {
       // 1回目と2回目のパスワードが完全一致するか確認
       if (checkPasswordMatch(tempPasswordBuf, tempPasswordLen, currentInputPass, currentInputLen)) {
-        // 一致！ EEPROMに正式に保存してロック画面へ
+        // 一致！ EEPROMに正式に保存
         savedPasswordLen = tempPasswordLen;
         for(int i=0; i<tempPasswordLen; i++) savedPassword[i] = tempPasswordBuf[i];
         saveData();
         triggerSuccess("Success!", "Pass Saved");
+        
+        // パスワード変更の通知と、確実な施錠(LOCKED送信)を行う
+        espSerial.println("PASS_CHANGED");
+        lockDoor();
+        
         switchState(STATE_LOCKED);
       } else {
         // 不一致！ 最初からやり直し
@@ -475,11 +583,17 @@ void loop() {
         // 解錠成功
         String pd = "";
         for(int i=0; i<currentInputLen; i++) {
-          pd += dirToString(currentInputPass[i]) + " ";
+          pd += String(currentInputPass[i]); // 数字ベースで送信
         }
         unlockDoor("Joystick", pd);
       } else {
         // パスワード間違い
+        String pd = "";
+        for(int i=0; i<currentInputLen; i++) {
+          pd += String(currentInputPass[i]); // 数字ベースで送信
+        }
+        espSerial.println("FAIL:Joystick:" + pd);
+        
         triggerError("Wrong Pass!", "Try Again");
         switchState(STATE_LOCKED);
       }
