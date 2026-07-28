@@ -1,55 +1,68 @@
-#include <BleGamepad.h>
+#include <BleKeyboard.h>
 
-// =====================================================
-// ピン定義 (ESP32のピンに合わせてください)
-// =====================================================
-#define VRX_PIN 32 // ジョイスティックのX軸 (VRX)
-#define VRY_PIN 33 // ジョイスティックのY軸 (VRY)
-#define SW_PIN  25 // ジョイスティックの押し込みボタン (SW)
+// ピン定義
+#define VRX_PIN 35
+#define VRY_PIN 34
+#define SW_PIN  26
 
 // コントローラーの名前とメーカー名を設定
-BleGamepad bleGamepad("ESP32 Gamepad", "Custom Maker", 100);
+BleKeyboard bleKeyboard("ESP32 Keyboard", "Custom Maker", 100);
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Starting BLE Gamepad!");
-  
-  // スイッチピンをプルアップ入力に設定
   pinMode(SW_PIN, INPUT_PULLUP);
   
-  // BLEゲームパッドの初期化
-  bleGamepad.begin();
+  // キーボードとして初期化
+  bleKeyboard.begin();
 }
 
 void loop() {
-  // PCやスマホとBluetooth接続されている時だけ動作する
-  if (bleGamepad.isConnected()) {
-    
-    // 1. アナログスティックの読み取り
-    // ESP32のADC(アナログ入力)は 0 〜 4095 の範囲で取得される
+  if (bleKeyboard.isConnected()) {
     int xRaw = analogRead(VRX_PIN);
     int yRaw = analogRead(VRY_PIN);
+    int swState = digitalRead(SW_PIN);
     
-    // BleGamepadライブラリの標準形式 (-32767 〜 32767) に変換(マッピング)する
-    // ジョイスティックの向きが逆の場合は、ここの 32767 と -32767 を入れ替えてください
-    int xMapped = map(xRaw, 0, 4095, -32767, 32767);
-    int yMapped = map(yRaw, 0, 4095, -32767, 32767);
+    // 【シリアルモニタで確認用】
+    // ツール ＞ シリアルモニタを開き、右下の通信速度を 115200 に設定してください
+    Serial.print("X: "); Serial.print(xRaw);
+    Serial.print(" | Y: "); Serial.print(yRaw);
+    Serial.print(" | SW: "); Serial.println(swState == LOW ? "PRESSED (0)" : "RELEASED (1)");
     
-    // 左のアナログスティックとしてPCに送信
-    bleGamepad.setLeftThumb(xMapped, yMapped);
-    
-    // 2. ボタンの読み取り
-    // スイッチはLOW(GNDと繋がった状態)で「押された」と判定
-    if (digitalRead(SW_PIN) == LOW) {
-      bleGamepad.press(BUTTON_1); // Aボタンなどを押す
+    // 【X軸 (左右)】 
+    // ※もし左右が逆の場合は、KEY_LEFT_ARROW と KEY_RIGHT_ARROW を入れ替えてください
+    if (xRaw < 1000) {
+      bleKeyboard.press(KEY_LEFT_ARROW);
+      bleKeyboard.release(KEY_RIGHT_ARROW);
+    } else if (xRaw > 3000) {
+      bleKeyboard.press(KEY_RIGHT_ARROW);
+      bleKeyboard.release(KEY_LEFT_ARROW);
     } else {
-      bleGamepad.release(BUTTON_1); // ボタンを離す
+      bleKeyboard.release(KEY_LEFT_ARROW);
+      bleKeyboard.release(KEY_RIGHT_ARROW);
     }
     
-    // PCの負荷を減らすため少し待機 (50FPS相当)
+    // 【Y軸 (上下)】
+    // ※もし上下が逆の場合は、KEY_UP_ARROW と KEY_DOWN_ARROW を入れ替えてください
+    if (yRaw < 1000) {
+      bleKeyboard.press(KEY_UP_ARROW);
+      bleKeyboard.release(KEY_DOWN_ARROW);
+    } else if (yRaw > 3000) {
+      bleKeyboard.press(KEY_DOWN_ARROW);
+      bleKeyboard.release(KEY_UP_ARROW);
+    } else {
+      bleKeyboard.release(KEY_UP_ARROW);
+      bleKeyboard.release(KEY_DOWN_ARROW);
+    }
+    
+    // 【決定ボタン (左Shiftキー)】
+    if (swState == LOW) {
+      bleKeyboard.press(KEY_LEFT_SHIFT); // 左Shiftキー
+    } else {
+      bleKeyboard.release(KEY_LEFT_SHIFT);
+    }
+    
     delay(20);
   } else {
-    // 接続待機中は負荷を下げる
     delay(500);
   }
 }
