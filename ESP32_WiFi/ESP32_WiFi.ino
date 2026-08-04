@@ -13,7 +13,8 @@ const char* HOST = "api.line.me";
 // =====================================================
 // LINE Messaging API へメッセージ送信
 // =====================================================
-void sendLineMessage(String message) {
+void sendLineMessage(String message, const char* token, const char* userId) {
+  if (String(token) == "" || String(userId) == "") return;
   WiFiClientSecure client;
   client.setInsecure(); // SSL証明書の検証をスキップ
 
@@ -43,14 +44,14 @@ void sendLineMessage(String message) {
 
   // JSON形式で送信データ(Push Message)を構築
   String body =
-      "{\"to\":\"" + String(LINE_USER_ID) +
+      "{\"to\":\"" + String(userId) +
       "\",\"messages\":[{\"type\":\"text\",\"text\":\"" +
       safeMessage + "\"}]}";
 
   // HTTPヘッダーの送信
   client.println("POST /v2/bot/message/push HTTP/1.1");
   client.println("Host: api.line.me");
-  client.println("Authorization: Bearer " + String(LINE_ACCESS_TOKEN));
+  client.println("Authorization: Bearer " + String(token));
   client.println("Content-Type: application/json");
   client.print("Content-Length: ");
   client.println(body.length());
@@ -69,6 +70,14 @@ void sendLineMessage(String message) {
     Serial.print(client.readStringUntil('\n'));
   }
   Serial.println();
+  
+  client.stop(); // 明示的にソケットを閉じて連続送信時のリソース枯渇を防ぐ
+}
+
+// 両方のボットにメッセージを送信するヘルパー関数
+void broadcastLineMessage(String message) {
+  sendLineMessage(message, LINE_ACCESS_TOKEN_1, LINE_USER_ID_1);
+  sendLineMessage(message, LINE_ACCESS_TOKEN_2, LINE_USER_ID_2);
 }
 
 // =====================================================
@@ -104,7 +113,9 @@ void setup() {
   Serial.print("[WiFi] IP Address: ");
   Serial.println(WiFi.localIP());
 
-  sendLineMessage("【スマートロック】\nESP32が起動し、Wi-Fiに接続しました。");
+  broadcastLineMessage("【スマートロック】\nESP32が起動し、Wi-Fiに接続しました。\n\n【LINEからの操作方法】\n・unlock:パスワード\n・change:新パスワード\n(例: unlock:142)\n※パスワードはジョイスティックの方向(1〜8)の数字で指定します。");
+  sendLineMessage("【システム通知】\nこの端末は「Bot 1」として登録されています。", LINE_ACCESS_TOKEN_1, LINE_USER_ID_1);
+  sendLineMessage("【システム通知】\nこの端末は「Bot 2」として登録されています。", LINE_ACCESS_TOKEN_2, LINE_USER_ID_2);
 }
 
 // =====================================================
@@ -118,30 +129,59 @@ void loop() {
   if (now - lastPollTime > 5000) {
     lastPollTime = now;
     
-    if (String(GAS_WEBHOOK_URL) != "") {
-      WiFiClientSecure secureClient;
-      secureClient.setInsecure(); // SSL証明書検証をスキップ
-      
-      HTTPClient http;
-      http.begin(secureClient, GAS_WEBHOOK_URL);
-      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); // GASはリダイレクトが必須
-      
-      int httpCode = http.GET();
-      if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
-        payload.trim();
+    const char* urls[] = {GAS_WEBHOOK_URL_1, GAS_WEBHOOK_URL_2};
+    for (int i = 0; i < 2; i++) {
+      if (String(urls[i]) != "") {
+        WiFiClientSecure secureClient;
+        secureClient.setInsecure(); // SSL証明書検証をスキップ
         
-        if (payload.startsWith("unlock:")) {
-          String pass = payload.substring(7); // 例: "063"
-          // ESP32のSerialはUnoと繋がっているため、printlnでそのままUnoに送信される
-          Serial.println("LINE_UNLOCK:" + pass); 
-        } 
-        else if (payload.startsWith("change:")) {
-          String pass = payload.substring(7); // 例: "063"
-          Serial.println("LINE_CHANGE:" + pass);
+        HTTPClient http;
+        http.begin(secureClient, urls[i]);
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); // GASはリダイレクトが必須
+        
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+          String payload = http.getString();
+          payload.trim();
+          
+          if (payload.length() > 0) {
+            Serial.print("[GAS Polling Bot ");
+            Serial.print(i + 1);
+            Serial.print("] Received: ");
+            Serial.println(payload);
+            
+            // スマホ特有の自動大文字化や全角コロンを吸収するための正規化
+            String normalized = payload;
+            normalized.toLowerCase();
+            normalized.replace("：", ":");
+
+            if (normalized.startsWith("unlock:")) {
+              String pass = normalized.substring(7);
+              pass.trim();
+              String botName = (i == 0) ? "LINE(Bot 1)" : "LINE(Bot 2)";
+              Serial.println("LINE_UNLOCK:" + botName + ":" + pass); 
+            } 
+            else if (normalized.startsWith("change:")) {
+              String pass = normalized.substring(7);
+              pass.trim();
+              String botName = (i == 0) ? "LINE(Bot 1)" : "LINE(Bot 2)";
+              Serial.println("LINE_CHANGE:" + botName + ":" + pass);
+            }
+            else {
+              // 意味不明なメッセージ
+              const char* token = (i == 0) ? LINE_ACCESS_TOKEN_1 : LINE_ACCESS_TOKEN_2;
+              const char* userId = (i == 0) ? LINE_USER_ID_1 : LINE_USER_ID_2;
+              sendLineMessage("⚠️【エラー】\n意味不明なメッセージです。\n\n解錠する場合は「unlock:パスワード」\nパスワードを変更する場合は「change:パスワード」\nと半角で入力してください。", token, userId);
+            }
+          }
+        } else {
+          Serial.print("[GAS Polling Bot ");
+          Serial.print(i + 1);
+          Serial.print("] Failed. HTTP Code: ");
+          Serial.println(httpCode);
         }
+        http.end();
       }
-      http.end();
     }
   }
 
@@ -180,10 +220,11 @@ void loop() {
            arrowDetail = detail;
         }
 
-        sendLineMessage(
-            "🔓スマートロック解錠\n\n"
-            "認証方法：" + method +
-            "\n入力：" + arrowDetail);
+        if (method.startsWith("LINE")) {
+            broadcastLineMessage("✅【遠隔操作 成功】\n\nスマートロックを解錠しました。\n操作者：" + method + "\n入力：" + arrowDetail);
+        } else {
+            broadcastLineMessage("🔓スマートロック解錠\n\n認証方法：" + method + "\n入力：" + arrowDetail);
+        }
       } 
       // [NEW] 入力失敗時のメッセージに対応
       else if (data.startsWith("FAIL:")) {
@@ -207,18 +248,24 @@ void loop() {
         }
         if (arrowDetail == "") arrowDetail = detail;
 
-        sendLineMessage(
-            "⚠️スマートロック警告\n\n"
-            "誤ったパスワードが入力されました。\n"
-            "認証方法：" + method + "\n"
-            "入力内容：" + arrowDetail);
+        if (method.startsWith("LINE")) {
+            broadcastLineMessage("❌【遠隔操作 失敗】\n\nパスワードが違います。\n操作者：" + method + "\n入力：" + arrowDetail);
+        } else {
+            broadcastLineMessage("⚠️スマートロック警告\n\n誤ったパスワードが入力されました。\n認証方法：" + method + "\n入力内容：" + arrowDetail);
+        }
       }
       // [NEW] パスワード変更時のメッセージに対応
-      else if (data == "PASS_CHANGED") {
-        sendLineMessage("🔑スマートロック\n\nパスワードが新しく変更・登録されました。");
+      else if (data.startsWith("PASS_CHANGED")) {
+        int colonIdx = data.indexOf(':');
+        if (colonIdx != -1) {
+            String method = data.substring(colonIdx + 1);
+            broadcastLineMessage("✅【遠隔操作 成功】\n\nパスワードが新しく変更・登録されました。\n操作者：" + method);
+        } else {
+            broadcastLineMessage("🔑スマートロック\n\nパスワードが新しく変更・登録されました。");
+        }
       }
       else if (data == "LOCKED") {
-        sendLineMessage("🔒スマートロックを施錠しました。");
+        broadcastLineMessage("🔒スマートロックを施錠しました。");
       }
     }
   }

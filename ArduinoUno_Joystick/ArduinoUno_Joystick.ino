@@ -166,14 +166,23 @@ void lockDoor() {
   Serial.println(F("Door Locked."));
 }
 
-void unlockDoor(String method, String detail) {
+void unlockDoor(const char* method, byte* pass, int len) {
+  // サーボが動くと電圧が下がりESP32が再起動することがあるため、先に通信を行う
+  espSerial.print("UNLOCKED:");
+  espSerial.print(method);
+  espSerial.print(":");
+  for(int i=0; i<len; i++) espSerial.print(pass[i]);
+  espSerial.println();
+  
+  Serial.print("Door Unlocked via ");
+  Serial.println(method);
+  delay(100); // 送信完了を待つ
+  
   lockServo.write(UNLOCK_ANGLE);
   setLEDs(true, false);
   doorUnlocked = true;
   doorUnlockedTime = millis();
   
-  espSerial.println("UNLOCKED:" + method + ":" + detail);
-  Serial.println("Door Unlocked via " + method);
   switchState(STATE_UNLOCKED);
 }
 
@@ -218,31 +227,33 @@ void refreshOLED() {
     display.print(remain); display.print("s");
   }
   else if (currentState == STATE_ADMIN) {
-    String passStr = getCurrentPasswordString();
     display.setCursor(0,0); 
     display.print("Pass:"); 
-    display.print(passStr); 
+    for(int i=0; i<savedPasswordLen; i++) {
+      if (i > 8) { // 画面外にはみ出ないように制限
+        display.print("..");
+        break;
+      }
+      display.print(dirToArrow(savedPassword[i]));
+    }
     
-    bool isWrapped = (5 + passStr.length() > 21);
-    int menuY = isWrapped ? 16 : 8;
+    int menuY = 8;
     
     display.setCursor(0, menuY);
     display.print("--- Admin Menu ---");
     
-    String options[3] = {"Change Pass", "Initialize", "Exit (Lock)"};
+    const char* options[3] = {"Change Pass", "Initialize", "Exit (Lock)"};
     
     // 現在選択されている項目を描画
     display.setCursor(0, menuY + 8);
     display.print("-> ");
     display.print(options[adminCursor]);
     
-    // 画面下部(Y=24)に空きがある場合は、次の項目も薄く(矢印なしで)表示する
-    if (!isWrapped) {
-      int nextCursor = (adminCursor + 1) % 3;
-      display.setCursor(0, menuY + 16); // Y=24
-      display.print("   ");
-      display.print(options[nextCursor]);
-    }
+    // 次の項目も表示
+    int nextCursor = (adminCursor + 1) % 3;
+    display.setCursor(0, menuY + 16); // Y=24
+    display.print("   ");
+    display.print(options[nextCursor]);
   }
   else if (currentState == STATE_CHANGE_PASS_1) {
     display.setCursor(0,0); display.print("[Change Pass]");
@@ -319,27 +330,19 @@ String dirToString(byte dir) {
   }
 }
 
-// OLED表示用の矢印記号 (CP437文字コードを利用)
-String dirToArrow(byte dir) {
+// OLED表示用の方向テキスト (文字化け防止のため拡張ASCIIの矢印を使用)
+const char* dirToArrow(byte dir) {
   switch(dir) {
-    case DIR_UP: return "\x18";         // ↑
-    case DIR_DOWN: return "\x19";       // ↓
-    case DIR_LEFT: return "\x1B";       // ←
-    case DIR_RIGHT: return "\x1A";      // →
+    case DIR_UP: return "\x18"; // ↑
+    case DIR_DOWN: return "\x19"; // ↓
+    case DIR_LEFT: return "\x1B"; // ←
+    case DIR_RIGHT: return "\x1A"; // →
     case DIR_UP_LEFT: return "\x18\x1B"; // ↑←
     case DIR_UP_RIGHT: return "\x18\x1A"; // ↑→
     case DIR_DOWN_LEFT: return "\x19\x1B"; // ↓←
     case DIR_DOWN_RIGHT: return "\x19\x1A"; // ↓→
     default: return "?";
   }
-}
-
-String getCurrentPasswordString() {
-  String s = "";
-  for(int i = 0; i < savedPasswordLen; i++) {
-    s += dirToArrow(savedPassword[i]);
-  }
-  return s;
 }
 
 unsigned long lastStrokeEndTime = 0;
@@ -368,11 +371,12 @@ void handleJoystick() {
 
   // 方向入力の処理（ストロークベース）
   if (currentDir != DIR_CENTER) {
-    centerStartTime = 0; // センタリングのタイマーをリセット
     if (!inStroke) {
       // ストローク開始
-      inStroke = true;
-      strokeDir = currentDir;
+      if (millis() - lastStrokeEndTime > 30) { // 30msのチャタリング防止
+        inStroke = true;
+        strokeDir = currentDir;
+      }
     } else {
       // ストローク中の更新（斜め入力を優先して記録）
       bool isCurrentDiag = (currentDir >= DIR_UP_LEFT && currentDir <= DIR_DOWN_RIGHT);
@@ -385,19 +389,14 @@ void handleJoystick() {
       }
     }
   } else {
-    // ニュートラル(中央)
+    // ニュートラル(中央)に戻った瞬間に入力を確定
     if (inStroke) {
-      if (centerStartTime == 0) centerStartTime = millis();
+      inStroke = false;
+      lastStrokeEndTime = millis(); // 最後に方向入力された時間を記録
       
-      // 50ms以上中央に留まったらストローク終了として確定
-      if (millis() - centerStartTime > 50) {
-        inStroke = false;
-        lastStrokeEndTime = millis(); // 最後に方向入力された時間を記録
-        
-        if (currentInputLen < MAX_PASS_LENGTH) {
-          currentInputPass[currentInputLen++] = strokeDir;
-          refreshOLED();
-        }
+      if (currentInputLen < MAX_PASS_LENGTH) {
+        currentInputPass[currentInputLen++] = strokeDir;
+        refreshOLED();
       }
     }
   }
@@ -422,55 +421,43 @@ void handleEspSerial() {
     if (cmd.length() == 0) return;
     
     if (cmd.startsWith("LINE_UNLOCK:")) {
-      String linePass = cmd.substring(12);
+      int colonIdx = cmd.indexOf(':', 12);
+      String botName = cmd.substring(12, colonIdx);
+      String linePass = cmd.substring(colonIdx + 1);
       
       int tempLen = 0;
       byte tempBuf[MAX_PASS_LENGTH];
       for (int i=0; i<linePass.length() && i<MAX_PASS_LENGTH; i++) {
         char c = linePass.charAt(i);
-        if (c >= '0' && c <= '7') {
-          byte dir = DIR_CENTER;
-          if (c == '0') dir = DIR_UP;
-          else if (c == '1') dir = DIR_UP_RIGHT;
-          else if (c == '2') dir = DIR_RIGHT;
-          else if (c == '3') dir = DIR_DOWN_RIGHT;
-          else if (c == '4') dir = DIR_DOWN;
-          else if (c == '5') dir = DIR_DOWN_LEFT;
-          else if (c == '6') dir = DIR_LEFT;
-          else if (c == '7') dir = DIR_UP_LEFT;
+        byte dir = c - '0';
+        if (dir >= 1 && dir <= 8) {
           tempBuf[tempLen++] = dir;
         }
       }
       
       if (checkPasswordMatch(savedPassword, savedPasswordLen, tempBuf, tempLen)) {
-        String pd = "";
-        for(int i=0; i<tempLen; i++) pd += String(tempBuf[i]);
-        unlockDoor("LINE", pd);
+        unlockDoor(botName.c_str(), tempBuf, tempLen);
       } else {
-        String pd = "";
-        for(int i=0; i<tempLen; i++) pd += String(tempBuf[i]);
-        espSerial.println("FAIL:LINE:" + pd);
+        espSerial.print("FAIL:");
+        espSerial.print(botName);
+        espSerial.print(":");
+        for(int i=0; i<tempLen; i++) espSerial.print(tempBuf[i]);
+        espSerial.println();
         triggerError("LINE Error", "Wrong Pass");
         switchState(STATE_LOCKED);
       }
     } 
     else if (cmd.startsWith("LINE_CHANGE:")) {
-      String linePass = cmd.substring(12);
+      int colonIdx = cmd.indexOf(':', 12);
+      String botName = cmd.substring(12, colonIdx);
+      String linePass = cmd.substring(colonIdx + 1);
       
       int tempLen = 0;
       byte tempBuf[MAX_PASS_LENGTH];
       for (int i=0; i<linePass.length() && i<MAX_PASS_LENGTH; i++) {
         char c = linePass.charAt(i);
-        if (c >= '0' && c <= '7') {
-          byte dir = DIR_CENTER;
-          if (c == '0') dir = DIR_UP;
-          else if (c == '1') dir = DIR_UP_RIGHT;
-          else if (c == '2') dir = DIR_RIGHT;
-          else if (c == '3') dir = DIR_DOWN_RIGHT;
-          else if (c == '4') dir = DIR_DOWN;
-          else if (c == '5') dir = DIR_DOWN_LEFT;
-          else if (c == '6') dir = DIR_LEFT;
-          else if (c == '7') dir = DIR_UP_LEFT;
+        byte dir = c - '0';
+        if (dir >= 1 && dir <= 8) {
           tempBuf[tempLen++] = dir;
         }
       }
@@ -480,7 +467,8 @@ void handleEspSerial() {
         for (int i=0; i<tempLen; i++) savedPassword[i] = tempBuf[i];
         saveData();
         triggerSuccess("Success!", "LINE Pass Saved");
-        espSerial.println("PASS_CHANGED");
+        espSerial.print("PASS_CHANGED:");
+        espSerial.println(botName);
         lockDoor();
         switchState(STATE_LOCKED);
       }
@@ -506,6 +494,7 @@ void setup() {
     Serial.println(F("OLED init failed!"));
     for(;;);
   }
+  Wire.setClock(400000); // I2Cクロックを400kHzに引き上げて描画を高速化
   display.clearDisplay(); display.display();
 
   lockServo.attach(SERVO_PIN);
@@ -581,18 +570,12 @@ void loop() {
       
       if (checkPasswordMatch(savedPassword, savedPasswordLen, currentInputPass, currentInputLen)) {
         // 解錠成功
-        String pd = "";
-        for(int i=0; i<currentInputLen; i++) {
-          pd += String(currentInputPass[i]); // 数字ベースで送信
-        }
-        unlockDoor("Joystick", pd);
+        unlockDoor("Joystick", currentInputPass, currentInputLen);
       } else {
         // パスワード間違い
-        String pd = "";
-        for(int i=0; i<currentInputLen; i++) {
-          pd += String(currentInputPass[i]); // 数字ベースで送信
-        }
-        espSerial.println("FAIL:Joystick:" + pd);
+        espSerial.print("FAIL:Joystick:");
+        for(int i=0; i<currentInputLen; i++) espSerial.print(currentInputPass[i]);
+        espSerial.println();
         
         triggerError("Wrong Pass!", "Try Again");
         switchState(STATE_LOCKED);
